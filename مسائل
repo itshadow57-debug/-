@@ -1,0 +1,689 @@
+import { useState, useEffect, useRef } from "react";
+
+// ==================== TYPES ====================
+interface Book {
+  id: string;
+  name: string;
+  nameEn: string;
+  author: string;
+  pages: number;
+}
+
+interface Result {
+  id: number;
+  question: string;
+  answer: string;
+  timestamp: string;
+  error?: boolean;
+}
+
+interface Message {
+  role: "user" | "assistant";
+  content: string;
+}
+
+interface Particle {
+  id: number;
+  x: number;
+  y: number;
+  size: number;
+  speed: number;
+  delay: number;
+}
+
+interface Translations {
+  title: string;
+  subtitle: string;
+  placeholder: string;
+  search: string;
+  searching: string;
+  history: string;
+  about: string;
+  searchTab: string;
+  source: string;
+  page: string;
+  noResult: string;
+  tryAgain: string;
+  welcome: string;
+  welcomeSub: string;
+  books: string;
+  clearHistory: string;
+  share: string;
+  copy: string;
+  copied: string;
+  example1: string;
+  example2: string;
+  example3: string;
+}
+
+type Lang = "ar" | "en";
+type TabId = "search" | "history" | "about";
+
+// ==================== CONSTANTS ====================
+const BOOKS: Book[] = [
+  { id: "masail", name: "المسائل المنتخبة", nameEn: "Al-Masail Al-Muntakhaba", author: "السيد علي السيستاني", pages: 544 },
+  { id: "minhaj1", name: "منهاج الصالحين - الجزء الأول", nameEn: "Minhaj Al-Salihin Vol.1", author: "السيد علي السيستاني", pages: 520 },
+  { id: "minhaj2", name: "منهاج الصالحين - الجزء الثاني", nameEn: "Minhaj Al-Salihin Vol.2", author: "السيد علي السيستاني", pages: 516 },
+  { id: "minhaj3", name: "منهاج الصالحين - الجزء الثالث", nameEn: "Minhaj Al-Salihin Vol.3", author: "السيد علي السيستاني", pages: 356 },
+];
+
+const SYSTEM_PROMPT = `أنت مساعد متخصص في المسائل الشرعية الشيعية، تعتمد حصراً على كتب سماحة السيد علي السيستاني (دام ظله الوارف):
+1. المسائل المنتخبة
+2. منهاج الصالحين - الجزء الأول
+3. منهاج الصالحين - الجزء الثاني
+4. منهاج الصالحين - الجزء الثالث
+
+قواعد الإجابة:
+- أجب بشكل دقيق وواضح بناءً على الكتب المذكورة
+- اذكر اسم الكتاب ورقم الصفحة التقريبي لكل مسألة
+- استخدم لغة عربية فصيحة واضحة
+- رتّب الإجابة: أولاً الحكم، ثم التفاصيل، ثم المصدر
+- إذا كانت المسألة تشمل أحكاماً متعددة، رقّمها
+- في نهاية كل إجابة أضف: [المصدر: اسم الكتاب، ص: رقم تقريبي]
+- إذا لم تجد المسألة في الكتب، وضّح ذلك بأدب
+- لا تجيب على مسائل خارج نطاق الفقه الشيعي الإمامي
+
+تنسيق الإجابة:
+**الحكم:** ...
+**التفاصيل:** ...
+**المصدر:** [اسم الكتاب، الصفحة التقريبية]`;
+
+const TRANSLATIONS: Record<Lang, Translations> = {
+  ar: {
+    title: "المسائل الشرعية الشيعية",
+    subtitle: "بإشراف مرجعية السيد علي السيستاني دام ظله",
+    placeholder: "اكتب مسألتك الشرعية هنا...",
+    search: "بحث",
+    searching: "جاري البحث...",
+    history: "السجل",
+    about: "عن التطبيق",
+    searchTab: "البحث",
+    source: "المصدر",
+    page: "الصفحة",
+    noResult: "لم يتم العثور على نتيجة",
+    tryAgain: "حاول بكلمات مختلفة",
+    welcome: "أهلاً بك في",
+    welcomeSub: "اسأل مسألتك الشرعية وستجد الإجابة من كتب السيد السيستاني",
+    books: "الكتب المعتمدة",
+    clearHistory: "مسح السجل",
+    share: "مشاركة",
+    copy: "نسخ",
+    copied: "تم النسخ!",
+    example1: "ما هو حكم الوضوء بالماء الفاتر؟",
+    example2: "ما حكم الصلاة مع النجاسة؟",
+    example3: "ما هي شروط الخمس؟",
+  },
+  en: {
+    title: "Shia Islamic Jurisprudence",
+    subtitle: "Under the authority of Sayyid Ali Al-Sistani",
+    placeholder: "Write your religious question here...",
+    search: "Search",
+    searching: "Searching...",
+    history: "History",
+    about: "About",
+    searchTab: "Search",
+    source: "Source",
+    page: "Page",
+    noResult: "No result found",
+    tryAgain: "Try different keywords",
+    welcome: "Welcome to",
+    welcomeSub: "Ask your religious question and find answers from Sayyid Al-Sistani's books",
+    books: "Reference Books",
+    clearHistory: "Clear History",
+    share: "Share",
+    copy: "Copy",
+    copied: "Copied!",
+    example1: "What is the ruling on ablution with warm water?",
+    example2: "What is the ruling on prayer with impurity?",
+    example3: "What are the conditions of Khums?",
+  },
+};
+
+// ==================== RESULT CARD ====================
+interface ResultCardProps {
+  result: Result;
+  lang: Lang;
+  txt: Translations;
+  formatAnswer: (text: string) => string;
+  copyToClipboard: (text: string) => void;
+  delay: number;
+}
+
+function ResultCard({ result, lang, txt, formatAnswer, copyToClipboard, delay }: ResultCardProps) {
+  const [copied, setCopied] = useState<boolean>(false);
+
+  const handleCopy = (): void => {
+    copyToClipboard(`${result.question}\n\n${result.answer}`);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleShare = async (): Promise<void> => {
+    const text = `${result.question}\n\n${result.answer}\n\n— المسائل الشرعية الشيعية`;
+    if (navigator.share) {
+      await navigator.share({ title: "مسألة شرعية", text });
+    } else {
+      copyToClipboard(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
+  return (
+    <div
+      className="result-card"
+      style={{ marginBottom: "16px", padding: "20px", animationDelay: `${delay}s` }}
+    >
+      {/* Question */}
+      <div
+        style={{
+          display: "flex", alignItems: "flex-start", gap: 10,
+          marginBottom: "16px", paddingBottom: "14px",
+          borderBottom: "1px solid rgba(201,168,76,0.1)",
+        }}
+      >
+        <div style={{
+          width: 28, height: 28, borderRadius: "50%",
+          background: "rgba(201,168,76,0.15)", border: "1px solid rgba(201,168,76,0.3)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          fontSize: 14, flexShrink: 0,
+        }}>❓</div>
+        <p style={{ fontSize: "15px", color: "#e8d5a3", lineHeight: 1.7, fontWeight: 600 }}>
+          {result.question}
+        </p>
+      </div>
+
+      {/* Answer */}
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: "16px" }}>
+        <div style={{
+          width: 28, height: 28, borderRadius: "50%",
+          background: "linear-gradient(135deg, rgba(201,168,76,0.3), rgba(201,168,76,0.1))",
+          border: "1px solid rgba(201,168,76,0.4)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          fontSize: 14, flexShrink: 0,
+        }}>📜</div>
+        <div
+          style={{ fontSize: "14px", color: "rgba(232,213,163,0.85)", lineHeight: 1.9 }}
+          dangerouslySetInnerHTML={{ __html: `<p class="answer-para">${formatAnswer(result.answer)}</p>` }}
+        />
+      </div>
+
+      {/* Footer */}
+      <div style={{
+        display: "flex", alignItems: "center", justifyContent: "space-between",
+        paddingTop: "12px", borderTop: "1px solid rgba(201,168,76,0.08)",
+      }}>
+        <span style={{ fontSize: "11px", color: "rgba(232,213,163,0.3)" }}>
+          🕐 {result.timestamp}
+        </span>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button className="icon-btn" onClick={handleCopy} style={{ fontFamily: "inherit", fontSize: 11 }}>
+            {copied ? `✅ ${txt.copied}` : `📋 ${txt.copy}`}
+          </button>
+          <button className="icon-btn" onClick={handleShare} style={{ fontFamily: "inherit", fontSize: 11 }}>
+            📤 {txt.share}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ==================== EMPTY STATE ====================
+interface EmptyStateProps {
+  lang: Lang;
+}
+
+function EmptyState({ lang }: EmptyStateProps) {
+  return (
+    <div style={{ textAlign: "center", padding: "60px 20px", color: "rgba(232,213,163,0.3)" }}>
+      <div style={{ fontSize: 48, marginBottom: 16, opacity: 0.3 }}>📖</div>
+      <p style={{ fontSize: 16, marginBottom: 8 }}>
+        {lang === "ar" ? "لا توجد مسائل مبحوثة بعد" : "No questions searched yet"}
+      </p>
+      <p style={{ fontSize: 13 }}>
+        {lang === "ar" ? "ابدأ بكتابة مسألتك في خانة البحث" : "Start by typing your question in the search box"}
+      </p>
+    </div>
+  );
+}
+
+// ==================== ABOUT SECTION ====================
+interface AboutSectionProps {
+  lang: Lang;
+  txt: Translations;
+  books: Book[];
+}
+
+function AboutSection({ lang, txt, books }: AboutSectionProps) {
+  return (
+    <div>
+      <div style={{
+        background: "linear-gradient(135deg, rgba(201,168,76,0.1), rgba(201,168,76,0.03))",
+        border: "1px solid rgba(201,168,76,0.2)", borderRadius: 20,
+        padding: "24px 20px", textAlign: "center", marginBottom: 20, position: "relative", overflow: "hidden",
+      }}>
+        <div style={{
+          position: "absolute", top: 0, left: 0, right: 0, height: 3,
+          background: "linear-gradient(90deg, transparent, #c9a84c, transparent)",
+        }} />
+        <div style={{ fontSize: 48, marginBottom: 12 }}>🕌</div>
+        <h2 style={{ fontSize: 20, color: "#c9a84c", marginBottom: 6 }}>
+          {lang === "ar" ? "السيد علي الحسيني السيستاني" : "Sayyid Ali Al-Husseini Al-Sistani"}
+        </h2>
+        <p style={{ fontSize: 12, color: "rgba(232,213,163,0.5)", lineHeight: 1.7 }}>
+          {lang === "ar"
+            ? "المرجع الأعلى للمسلمين الشيعة في العراق والعالم\nولد في مشهد عام 1930م\nيقيم في النجف الأشرف"
+            : "Supreme Religious Authority for Shia Muslims\nBorn in Mashhad, 1930\nResides in Najaf, Iraq"}
+        </p>
+      </div>
+
+      <div style={{
+        background: "rgba(201,168,76,0.04)", border: "1px solid rgba(201,168,76,0.12)",
+        borderRadius: 16, padding: "20px", marginBottom: 20,
+      }}>
+        <h3 style={{ fontSize: 16, color: "#c9a84c", marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}>
+          📚 {txt.books}
+        </h3>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {books.map((book: Book) => (
+            <div key={book.id} className="book-card">
+              <div style={{
+                width: 40, height: 40, borderRadius: 8,
+                background: "linear-gradient(135deg, #c9a84c22, #c9a84c11)",
+                border: "1px solid rgba(201,168,76,0.3)",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                fontSize: 18, flexShrink: 0,
+              }}>📖</div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 14, color: "#e8d5a3", fontWeight: 600, marginBottom: 2 }}>
+                  {lang === "ar" ? book.name : book.nameEn}
+                </div>
+                <div style={{ fontSize: 11, color: "rgba(232,213,163,0.4)" }}>
+                  {lang === "ar" ? book.author : "Sayyid Ali Al-Sistani"} · {book.pages}{" "}
+                  {lang === "ar" ? "صفحة" : "pages"}
+                </div>
+              </div>
+              <div style={{
+                fontSize: 10, background: "rgba(201,168,76,0.15)", color: "#c9a84c",
+                padding: "3px 8px", borderRadius: 50,
+              }}>
+                ✓ {lang === "ar" ? "معتمد" : "Verified"}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div style={{
+        background: "rgba(201,168,76,0.04)", border: "1px solid rgba(201,168,76,0.12)",
+        borderRadius: 16, padding: "20px",
+      }}>
+        <h3 style={{ fontSize: 14, color: "#c9a84c", marginBottom: 12 }}>
+          ℹ️ {lang === "ar" ? "عن التطبيق" : "About the App"}
+        </h3>
+        <p style={{ fontSize: 13, color: "rgba(232,213,163,0.6)", lineHeight: 1.8 }}>
+          {lang === "ar"
+            ? "تطبيق المسائل الشرعية الشيعية يوفر إجابات دقيقة على المسائل الفقهية استناداً إلى كتب سماحة السيد علي السيستاني المعتمدة."
+            : "The Shia Islamic Jurisprudence app provides precise answers to religious questions based on Sayyid Ali Al-Sistani's official books."}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ==================== MAIN APP ====================
+export default function App() {
+  const [lang, setLang] = useState<Lang>("ar");
+  const [query, setQuery] = useState<string>("");
+  const [results, setResults] = useState<Result[]>([]);
+  const [loading, setLoading] = useState<boolean>(false);
+  const [history, setHistory] = useState<Message[]>([]);
+  const [activeTab, setActiveTab] = useState<TabId>("search");
+  const [particles, setParticles] = useState<Particle[]>([]);
+  const resultsRef = useRef<HTMLDivElement>(null);
+
+  const txt: Translations = TRANSLATIONS[lang];
+
+  useEffect(() => {
+    const pts: Particle[] = Array.from({ length: 20 }, (_, i) => ({
+      id: i,
+      x: Math.random() * 100,
+      y: Math.random() * 100,
+      size: Math.random() * 3 + 1,
+      speed: Math.random() * 20 + 10,
+      delay: Math.random() * 5,
+    }));
+    setParticles(pts);
+  }, []);
+
+  const formatAnswer = (text: string): string => {
+    return text
+      .replace(/\*\*(.*?)\*\*/g, '<strong class="highlight-text">$1</strong>')
+      .replace(/\n\n/g, '</p><p class="answer-para">')
+      .replace(/\n/g, "<br/>");
+  };
+
+  const copyToClipboard = (text: string): void => {
+    navigator.clipboard.writeText(text);
+  };
+
+  const handleSearch = async (searchQuery?: string): Promise<void> => {
+    const q = searchQuery || query;
+    if (!q.trim()) return;
+    setLoading(true);
+    setActiveTab("search");
+
+    const userMsg: Message = { role: "user", content: q };
+    const newHistory: Message[] = [...history, userMsg];
+
+    try {
+      const response = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 1000,
+          system: SYSTEM_PROMPT,
+          messages: newHistory,
+        }),
+      });
+
+      const data = await response.json();
+      const answer: string = data.content?.[0]?.text || "لم يتم الحصول على إجابة";
+      const assistantMsg: Message = { role: "assistant", content: answer };
+      setHistory([...newHistory, assistantMsg]);
+
+      setResults((prev) => [{
+        id: Date.now(),
+        question: q,
+        answer,
+        timestamp: new Date().toLocaleString(lang === "ar" ? "ar-IQ" : "en-US"),
+      }, ...prev]);
+    } catch (err) {
+      setResults((prev) => [{
+        id: Date.now(),
+        question: q,
+        answer: "حدث خطأ في الاتصال. يرجى المحاولة مرة أخرى.",
+        timestamp: new Date().toLocaleString(),
+        error: true,
+      }, ...prev]);
+    }
+
+    setLoading(false);
+    setQuery("");
+    setTimeout(() => resultsRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
+  };
+
+  const tabs: { id: TabId; label: string; icon: string }[] = [
+    { id: "search", label: txt.searchTab, icon: "🔍" },
+    { id: "history", label: txt.history, icon: "📖" },
+    { id: "about", label: txt.about, icon: "ℹ️" },
+  ];
+
+  return (
+    <div
+      dir={lang === "ar" ? "rtl" : "ltr"}
+      style={{
+        minHeight: "100vh",
+        background: "linear-gradient(135deg, #0a0a12 0%, #0d1117 40%, #0a1220 70%, #06080f 100%)",
+        fontFamily: lang === "ar" ? "'Amiri', 'Scheherazade New', serif" : "'Cormorant Garamond', serif",
+        color: "#e8d5a3",
+        overflowX: "hidden",
+        position: "relative",
+      }}
+    >
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Amiri:wght@400;700&family=Scheherazade+New:wght@400;700&family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400&display=swap');
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #0a0a12; }
+        ::-webkit-scrollbar-thumb { background: #c9a84c; border-radius: 3px; }
+        .particle { position: fixed; border-radius: 50%; background: radial-gradient(circle, #c9a84c88, transparent); pointer-events: none; animation: floatUp linear infinite; }
+        @keyframes floatUp { 0% { transform: translateY(100vh) scale(0); opacity: 0; } 10% { opacity: 0.6; } 90% { opacity: 0.2; } 100% { transform: translateY(-20vh) scale(1.5); opacity: 0; } }
+        @keyframes shimmer { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
+        @keyframes slideDown { from { opacity: 0; transform: translateY(-20px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes fadeInUp { from { opacity: 0; transform: translateY(30px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes pulse { 0%, 100% { box-shadow: 0 0 20px #c9a84c44; } 50% { box-shadow: 0 0 40px #c9a84caa, 0 0 80px #c9a84c44; } }
+        @keyframes loadingDot { 0%, 80%, 100% { transform: scale(0.8); opacity: 0.4; } 40% { transform: scale(1.2); opacity: 1; } }
+        .search-btn { background: linear-gradient(135deg, #c9a84c, #a07830, #c9a84c); background-size: 200% 200%; border: none; color: #0a0a12; font-weight: 700; cursor: pointer; transition: all 0.3s; animation: pulse 3s infinite; }
+        .search-btn:hover { transform: scale(1.05); box-shadow: 0 8px 30px #c9a84c66; }
+        .search-btn:active { transform: scale(0.98); }
+        .search-input { background: rgba(255,255,255,0.04); border: 1px solid rgba(201,168,76,0.25); color: #e8d5a3; outline: none; transition: all 0.3s; backdrop-filter: blur(10px); }
+        .search-input::placeholder { color: rgba(232,213,163,0.4); }
+        .search-input:focus { border-color: #c9a84c; background: rgba(201,168,76,0.08); box-shadow: 0 0 0 3px rgba(201,168,76,0.15); }
+        .result-card { background: linear-gradient(135deg, rgba(201,168,76,0.06), rgba(201,168,76,0.02)); border: 1px solid rgba(201,168,76,0.2); border-radius: 16px; animation: fadeInUp 0.5s ease forwards; backdrop-filter: blur(10px); overflow: hidden; position: relative; }
+        .result-card::before { content: ''; position: absolute; top: 0; right: 0; width: 4px; height: 100%; background: linear-gradient(to bottom, #c9a84c, #7a5c1e); }
+        .tab-btn { background: transparent; border: none; cursor: pointer; transition: all 0.3s; color: rgba(232,213,163,0.5); position: relative; }
+        .tab-btn.active { color: #c9a84c; }
+        .tab-btn.active::after { content: ''; position: absolute; bottom: -2px; left: 0; right: 0; height: 2px; background: #c9a84c; border-radius: 2px; }
+        .icon-btn { background: rgba(201,168,76,0.1); border: 1px solid rgba(201,168,76,0.2); color: #c9a84c; cursor: pointer; border-radius: 8px; transition: all 0.2s; padding: 6px 12px; font-size: 12px; }
+        .icon-btn:hover { background: rgba(201,168,76,0.2); transform: translateY(-1px); }
+        .example-chip { background: rgba(201,168,76,0.08); border: 1px solid rgba(201,168,76,0.2); border-radius: 50px; padding: 8px 16px; cursor: pointer; transition: all 0.3s; font-size: 13px; color: rgba(232,213,163,0.7); }
+        .example-chip:hover { background: rgba(201,168,76,0.18); color: #e8d5a3; transform: translateY(-2px); border-color: rgba(201,168,76,0.4); }
+        .book-card { background: rgba(201,168,76,0.05); border: 1px solid rgba(201,168,76,0.15); border-radius: 12px; padding: 12px 16px; display: flex; align-items: center; gap: 12px; transition: all 0.3s; }
+        .book-card:hover { background: rgba(201,168,76,0.1); border-color: rgba(201,168,76,0.3); }
+        .loading-dot { width: 8px; height: 8px; border-radius: 50%; background: #c9a84c; animation: loadingDot 1.4s ease-in-out infinite; }
+        .highlight-text { color: #c9a84c; }
+        .answer-para { margin-top: 10px; }
+        .glassmorphism { background: rgba(255,255,255,0.03); backdrop-filter: blur(20px); border: 1px solid rgba(201,168,76,0.12); }
+        .lang-toggle { background: rgba(201,168,76,0.1); border: 1px solid rgba(201,168,76,0.25); border-radius: 50px; cursor: pointer; color: #c9a84c; transition: all 0.3s; padding: 6px 14px; font-size: 13px; font-weight: 600; }
+        .lang-toggle:hover { background: rgba(201,168,76,0.2); }
+        .arabic-pattern { opacity: 0.03; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background-image: repeating-linear-gradient(45deg, #c9a84c 0px, #c9a84c 1px, transparent 1px, transparent 20px), repeating-linear-gradient(-45deg, #c9a84c 0px, #c9a84c 1px, transparent 1px, transparent 20px); pointer-events: none; }
+      `}</style>
+
+      <div className="arabic-pattern" />
+
+      {particles.map((p: Particle) => (
+        <div key={p.id} className="particle" style={{
+          left: `${p.x}%`, width: `${p.size}px`, height: `${p.size}px`,
+          animationDuration: `${p.speed}s`, animationDelay: `${p.delay}s`,
+        }} />
+      ))}
+
+      {/* Header */}
+      <header style={{
+        padding: "16px 20px", display: "flex", alignItems: "center", justifyContent: "space-between",
+        position: "sticky", top: 0, zIndex: 100,
+        background: "rgba(10,10,18,0.9)", backdropFilter: "blur(20px)",
+        borderBottom: "1px solid rgba(201,168,76,0.15)",
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+          <div style={{
+            width: 38, height: 38, borderRadius: "50%",
+            background: "linear-gradient(135deg, #c9a84c, #7a5c1e)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize: "18px", boxShadow: "0 4px 15px rgba(201,168,76,0.3)",
+          }}>☪</div>
+          <div>
+            <div style={{ fontSize: "15px", fontWeight: "700", color: "#c9a84c", lineHeight: 1.2 }}>
+              {txt.title}
+            </div>
+            <div style={{ fontSize: "10px", color: "rgba(232,213,163,0.4)", lineHeight: 1 }}>
+              {lang === "ar" ? "السيد علي السيستاني" : "Sayyid Al-Sistani"}
+            </div>
+          </div>
+        </div>
+        <button className="lang-toggle" onClick={() => setLang(lang === "ar" ? "en" : "ar")}>
+          {lang === "ar" ? "EN" : "عربي"}
+        </button>
+      </header>
+
+      {/* Hero */}
+      <div style={{ textAlign: "center", padding: "32px 20px 24px", position: "relative" }}>
+        <div style={{
+          width: 100, height: 100, borderRadius: "50%",
+          border: "2px solid rgba(201,168,76,0.3)",
+          margin: "0 auto 16px", display: "flex", alignItems: "center", justifyContent: "center",
+          position: "relative", animation: "pulse 3s infinite",
+        }}>
+          <div style={{
+            width: 80, height: 80, borderRadius: "50%",
+            border: "1px solid rgba(201,168,76,0.2)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}>
+            <div style={{
+              width: 60, height: 60, borderRadius: "50%",
+              background: "radial-gradient(circle, rgba(201,168,76,0.15), transparent)",
+              display: "flex", alignItems: "center", justifyContent: "center", fontSize: 28,
+            }}>🕌</div>
+          </div>
+          {[0, 60, 120, 180, 240, 300].map((deg: number, i: number) => (
+            <div key={i} style={{
+              position: "absolute", width: 6, height: 6, borderRadius: "50%",
+              background: "#c9a84c", opacity: 0.4 + i * 0.1,
+              transform: `rotate(${deg}deg) translateX(50px)`,
+            }} />
+          ))}
+        </div>
+        <div style={{ color: "#c9a84c88", fontSize: 24, marginBottom: 8, letterSpacing: 8, animation: "shimmer 3s infinite" }}>
+          ✦ ✦ ✦
+        </div>
+        <h1 style={{ fontSize: "22px", fontWeight: "700", color: "#c9a84c", marginBottom: "6px", textShadow: "0 0 30px rgba(201,168,76,0.3)" }}>
+          {txt.title}
+        </h1>
+        <p style={{ fontSize: "13px", color: "rgba(232,213,163,0.5)", marginBottom: 4 }}>{txt.subtitle}</p>
+        <p style={{ fontSize: "12px", color: "rgba(232,213,163,0.3)" }}>
+          {lang === "ar" ? "بِسْمِ اللَّهِ الرَّحْمَنِ الرَّحِيمِ" : "In the name of Allah, the Most Gracious"}
+        </p>
+      </div>
+
+      {/* Tabs */}
+      <div style={{
+        display: "flex", justifyContent: "center", gap: "4px",
+        padding: "0 20px 16px", borderBottom: "1px solid rgba(201,168,76,0.1)",
+      }}>
+        {tabs.map((tab) => (
+          <button
+            key={tab.id}
+            className={`tab-btn ${activeTab === tab.id ? "active" : ""}`}
+            onClick={() => setActiveTab(tab.id)}
+            style={{ padding: "10px 18px", fontSize: "13px", fontWeight: "600", fontFamily: "inherit" }}
+          >
+            {tab.icon} {tab.label}
+            {tab.id === "history" && results.length > 0 && (
+              <span style={{
+                marginInlineStart: 6, background: "#c9a84c", color: "#0a0a12",
+                borderRadius: "50%", width: 18, height: 18,
+                display: "inline-flex", alignItems: "center", justifyContent: "center",
+                fontSize: 10, fontWeight: 700,
+              }}>{results.length}</span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {/* Main */}
+      <main style={{ padding: "20px", maxWidth: 680, margin: "0 auto", paddingBottom: 40 }}>
+
+        {/* Search Tab */}
+        {activeTab === "search" && (
+          <div style={{ animation: "slideDown 0.3s ease" }}>
+            <div className="glassmorphism" style={{ borderRadius: "20px", padding: "20px", marginBottom: "20px" }}>
+              <textarea
+                className="search-input"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSearch(); } }}
+                placeholder={txt.placeholder}
+                rows={3}
+                style={{
+                  width: "100%", borderRadius: "12px", padding: "14px 16px",
+                  fontSize: "15px", fontFamily: "inherit", resize: "none",
+                  lineHeight: 1.6, marginBottom: "12px", display: "block",
+                }}
+              />
+              <button
+                className="search-btn"
+                onClick={() => handleSearch()}
+                disabled={loading || !query.trim()}
+                style={{
+                  width: "100%", padding: "14px", borderRadius: "12px",
+                  fontSize: "16px", fontFamily: "inherit",
+                  display: "flex", alignItems: "center", justifyContent: "center", gap: "8px",
+                  opacity: loading || !query.trim() ? 0.6 : 1,
+                }}
+              >
+                {loading ? (
+                  <>
+                    <div style={{ display: "flex", gap: 4 }}>
+                      {[0, 1, 2].map((i: number) => (
+                        <div key={i} className="loading-dot" style={{ animationDelay: `${i * 0.2}s` }} />
+                      ))}
+                    </div>
+                    {txt.searching}
+                  </>
+                ) : (<>🔍 {txt.search}</>)}
+              </button>
+            </div>
+
+            {results.length === 0 && !loading && (
+              <div style={{ marginBottom: "20px" }}>
+                <p style={{ fontSize: "12px", color: "rgba(232,213,163,0.35)", marginBottom: "12px", textAlign: "center" }}>
+                  {lang === "ar" ? "أمثلة على المسائل:" : "Example questions:"}
+                </p>
+                <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                  {[txt.example1, txt.example2, txt.example3].map((ex: string, i: number) => (
+                    <button
+                      key={i} className="example-chip"
+                      onClick={() => { setQuery(ex); handleSearch(ex); }}
+                      style={{ textAlign: lang === "ar" ? "right" : "left", fontFamily: "inherit" }}
+                    >
+                      ◆ {ex}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div ref={resultsRef}>
+              {results.map((result: Result, idx: number) => (
+                <ResultCard key={result.id} result={result} lang={lang} txt={txt}
+                  formatAnswer={formatAnswer} copyToClipboard={copyToClipboard} delay={idx * 0.1} />
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* History Tab */}
+        {activeTab === "history" && (
+          <div style={{ animation: "slideDown 0.3s ease" }}>
+            {results.length > 0 ? (
+              <>
+                <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 16 }}>
+                  <button className="icon-btn" onClick={() => { setResults([]); setHistory([]); }} style={{ fontFamily: "inherit" }}>
+                    🗑 {txt.clearHistory}
+                  </button>
+                </div>
+                {results.map((result: Result, idx: number) => (
+                  <ResultCard key={result.id} result={result} lang={lang} txt={txt}
+                    formatAnswer={formatAnswer} copyToClipboard={copyToClipboard} delay={idx * 0.05} />
+                ))}
+              </>
+            ) : (
+              <EmptyState lang={lang} />
+            )}
+          </div>
+        )}
+
+        {/* About Tab */}
+        {activeTab === "about" && (
+          <div style={{ animation: "slideDown 0.3s ease" }}>
+            <AboutSection lang={lang} txt={txt} books={BOOKS} />
+          </div>
+        )}
+      </main>
+
+      {/* Footer */}
+      <div style={{
+        textAlign: "center", padding: "16px",
+        borderTop: "1px solid rgba(201,168,76,0.1)",
+        color: "rgba(232,213,163,0.25)", fontSize: "11px",
+      }}>
+        {lang === "ar"
+          ? "جميع الأحكام مستندة إلى مراجع السيد علي السيستاني المعتمدة"
+          : "All rulings are based on Sayyid Al-Sistani's official references"}
+      </div>
+    </div>
+  );
+}
